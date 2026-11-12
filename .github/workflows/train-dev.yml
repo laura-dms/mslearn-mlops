@@ -5,9 +5,6 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - 'src/train-model-parameters.py'
-      - 'src/job.yml'
 
 permissions:
   contents: read
@@ -28,11 +25,13 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Install Azure ML CLI
+        shell: bash
         run: |
           az extension add -n ml -y
 
       - name: Detect Azure ML workspace
         id: detect
+        shell: bash
         run: |
           RG_NAME=$(az group list --query "[?starts_with(name,'rg-ai300-l')].name | [0]" -o tsv)
           if [ -z "$RG_NAME" ]; then
@@ -53,73 +52,30 @@ jobs:
 
       - name: Run training job in dev
         id: train
+        shell: bash
         run: |
           JOB_NAME="diabetes-train-dev-${{ github.run_id }}"
           echo "Running Azure ML job: $JOB_NAME"
-          set -o pipefail
           az ml job create \
             -f src/job.yml \
             --name "$JOB_NAME" \
-            --set inputs.training_data.path=azureml:diabetes-dev-folder@latest \
-            --stream \
-            --debug 2>&1 | tee training_output.log
+            --set inputs.training_data.path=azureml:diabetes-dev-folder@latest
 
-      - name: Get job status and metrics
-        id: parse-metrics
+      - name: Wait for Azure ML job completion
+        id: wait-job
+        shell: bash
         run: |
           JOB_NAME="diabetes-train-dev-${{ github.run_id }}"
-          az ml job show -n "$JOB_NAME" --query "status" -o tsv
+          echo "Waiting for Azure ML job: $JOB_NAME"
+          az ml job wait -n "$JOB_NAME"
 
-          echo "Waiting for job completion..."
-          az ml job wait -n "$JOB_NAME" --query "status" -o tsv
-
-          # Fetch the metrics file (if available) from the output folder
-          az ml job download -n "$JOB_NAME" --download-path ./job-output || true
-
-          if [ -f ./job-output/metrics/metrics.json ]; then
-            ACC=$(python - <<'PY'
-import json
-with open('./job-output/metrics/metrics.json', 'r', encoding='utf-8') as f:
-    data = json.load(f)
-    print(data.get('accuracy', ''))
-PY
-            )
-            AUC=$(python - <<'PY'
-import json
-with open('./job-output/metrics/metrics.json', 'r', encoding='utf-8') as f:
-    data = json.load(f)
-    print(data.get('auc', ''))
-PY
-            )
-          else
-            ACC=""
-            AUC=""
-          fi
-
-          echo "Dev accuracy: $ACC"
-          echo "Dev AUC: $AUC"
-
-          echo "dev_accuracy=$ACC" >> "$GITHUB_OUTPUT"
-          echo "dev_auc=$AUC" >> "$GITHUB_OUTPUT"
-
-      - name: Comment dev metrics on pull request
+      - name: Comment job status on pull request
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const acc = '${{ steps.parse-metrics.outputs.dev_accuracy }}';
-            const auc = '${{ steps.parse-metrics.outputs.dev_auc }}';
-
             const prNumber = context.payload.pull_request.number;
-
-            let body = '✅ Dev training workflow completed.';
-            if (acc || auc) {
-              body += '\n\n**Dev evaluation metrics**';
-              if (acc) body += `\n- Accuracy: ${acc}`;
-              if (auc) body += `\n- AUC: ${auc}`;
-            } else {
-              body += '\n\nMetrics could not be parsed from logs. Check the Azure Machine Learning job run for details.';
-            }
+            const body = '✅ Dev training job was submitted successfully and completed without streaming the Azure ML logs.';
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
