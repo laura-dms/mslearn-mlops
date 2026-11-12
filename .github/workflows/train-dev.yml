@@ -67,7 +67,30 @@ jobs:
         run: |
           JOB_NAME="diabetes-train-dev-${{ github.run_id }}"
           echo "Waiting for Azure ML job: $JOB_NAME"
-          az ml job wait -n "$JOB_NAME"
+
+          for i in $(seq 1 60); do
+            STATUS=$(az ml job show -n "$JOB_NAME" --query "status" -o tsv 2>/dev/null || echo "NotFound")
+            echo "Current status: $STATUS"
+
+            if [ "$STATUS" = "Completed" ]; then
+              echo "Job completed successfully."
+              exit 0
+            fi
+
+            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Canceled" ] || [ "$STATUS" = "Cancelled" ]; then
+              echo "Job ended in failed state: $STATUS"
+              exit 1
+            fi
+
+            if [ "$STATUS" = "NotFound" ]; then
+              echo "Job still being created or not visible yet..."
+            fi
+
+            sleep 30
+          done
+
+          echo "Job did not complete within the timeout period."
+          exit 1
 
       - name: Comment job status on pull request
         if: github.event_name == 'pull_request'
