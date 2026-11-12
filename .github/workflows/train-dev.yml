@@ -51,29 +51,48 @@ jobs:
           echo "resource_group=$RG_NAME" >> "$GITHUB_OUTPUT"
           echo "workspace=$WS_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Run training job in dev and capture logs
+      - name: Run training job in dev
         id: train
         run: |
           JOB_NAME="diabetes-train-dev-${{ github.run_id }}"
           echo "Running Azure ML job: $JOB_NAME"
-          set -o pipefail
           az ml job create \
             -f src/job.yml \
             --name "$JOB_NAME" \
             --set inputs.training_data.path=azureml:diabetes-dev-folder@latest \
-            --stream \
-            --debug 2>&1 | tee training_output.log
+            --debug
 
-      - name: Extract dev metrics from logs
+      - name: Get job status and metrics
         id: parse-metrics
         run: |
-          if [ ! -f training_output.log ]; then
-            echo "No training_output.log found to parse metrics." >&2
-            exit 1
-          fi
+          JOB_NAME="diabetes-train-dev-${{ github.run_id }}"
+          az ml job show -n "$JOB_NAME" --query "status" -o tsv
 
-          ACC=$(grep -o "Accuracy: .*" training_output.log | tail -n 1 | awk '{print $2}') || true
-          AUC=$(grep -o "AUC: .*" training_output.log | tail -n 1 | awk '{print $2}') || true
+          echo "Waiting for job completion..."
+          az ml job wait -n "$JOB_NAME" --query "status" -o tsv
+
+          # Fetch the metrics file (if available) from the output folder
+          az ml job download -n "$JOB_NAME" --download-path ./job-output || true
+
+          if [ -f ./job-output/metrics/metrics.json ]; then
+            ACC=$(python - <<'PY'
+import json
+with open('./job-output/metrics/metrics.json', 'r', encoding='utf-8') as f:
+    data = json.load(f)
+    print(data.get('accuracy', ''))
+PY
+            )
+            AUC=$(python - <<'PY'
+import json
+with open('./job-output/metrics/metrics.json', 'r', encoding='utf-8') as f:
+    data = json.load(f)
+    print(data.get('auc', ''))
+PY
+            )
+          else
+            ACC=""
+            AUC=""
+          fi
 
           echo "Dev accuracy: $ACC"
           echo "Dev AUC: $AUC"
