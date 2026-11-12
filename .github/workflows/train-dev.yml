@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     branches:
-      - main 
+      - main
     paths:
       - 'src/train-model-parameters.py'
       - 'src/job.yml'
@@ -56,11 +56,13 @@ jobs:
         run: |
           JOB_NAME="diabetes-train-dev-${{ github.run_id }}"
           echo "Running Azure ML job: $JOB_NAME"
+          set -o pipefail
           az ml job create \
             -f src/job.yml \
             --name "$JOB_NAME" \
             --set inputs.training_data.path=azureml:diabetes-dev-folder@latest \
-            --debug
+            --stream \
+            --debug 2>&1 | tee training_output.log
 
       - name: Get job status and metrics
         id: parse-metrics
