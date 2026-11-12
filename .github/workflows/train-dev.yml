@@ -61,6 +61,7 @@ jobs:
             --name "$JOB_NAME" \
             --set inputs.training_data.path=azureml:diabetes-dev-folder@latest \
             --stream | tee training_output.log
+            -- debug
 
       - name: Extract dev metrics from logs
         id: parse-metrics
