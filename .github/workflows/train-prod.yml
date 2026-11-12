@@ -67,7 +67,7 @@ jobs:
 
       - name: Stream prod training job
         run: |
-          az ml job stream --name "${{ steps.train.outputs.job_name }}"
+          az ml job stream --name "${{ steps.train.outputs.job_name }}" --debug
 
       - name: Download prod training outputs
         id: download
