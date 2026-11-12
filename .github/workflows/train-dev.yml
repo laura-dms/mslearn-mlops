@@ -46,7 +46,6 @@ jobs:
           fi
 
           az configure --defaults group="$RG_NAME" workspace="$WS_NAME"
-
           echo "resource_group=$RG_NAME" >> "$GITHUB_OUTPUT"
           echo "workspace=$WS_NAME" >> "$GITHUB_OUTPUT"
 
@@ -98,7 +97,7 @@ jobs:
         with:
           script: |
             const prNumber = context.payload.pull_request.number;
-            const body = '✅ Dev training job was submitted successfully and completed without streaming the Azure ML logs.';
+            const body = '✅ Dev training job was started and completed without streaming the log output.';
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
