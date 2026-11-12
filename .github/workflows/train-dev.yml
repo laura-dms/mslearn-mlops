@@ -5,9 +5,6 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - 'src/train-model-parameters.py'
-      - 'src/job.yml'
 
 permissions:
   contents: read
@@ -28,11 +25,13 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Install Azure ML CLI
+        shell: bash
         run: |
           az extension add -n ml -y
 
       - name: Detect Azure ML workspace
         id: detect
+        shell: bash
         run: |
           RG_NAME=$(az group list --query "[?starts_with(name,'rg-ai300-l')].name | [0]" -o tsv)
           if [ -z "$RG_NAME" ]; then
@@ -47,58 +46,34 @@ jobs:
           fi
 
           az configure --defaults group="$RG_NAME" workspace="$WS_NAME"
-
           echo "resource_group=$RG_NAME" >> "$GITHUB_OUTPUT"
           echo "workspace=$WS_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Run training job in dev and capture logs
+      - name: Run training job in dev
         id: train
+        shell: bash
         run: |
           JOB_NAME="diabetes-train-dev-${{ github.run_id }}"
           echo "Running Azure ML job: $JOB_NAME"
-          set -o pipefail
           az ml job create \
             -f src/job.yml \
             --name "$JOB_NAME" \
-            --set inputs.training_data.path=azureml:diabetes-dev-folder@latest \
-            --stream \
-            --debug 2>&1 | tee training_output.log
+            --set inputs.training_data.path=azureml:diabetes-dev-folder@latest
 
-      - name: Extract dev metrics from logs
-        id: parse-metrics
+      - name: Wait for Azure ML job completion
+        id: wait-job
+        shell: bash
         run: |
-          if [ ! -f training_output.log ]; then
-            echo "No training_output.log found to parse metrics." >&2
-            exit 1
-          fi
+          JOB_NAME="diabetes-train-dev-${{ github.run_id }}"
+          az ml job wait -n "$JOB_NAME"
 
-          ACC=$(grep -o "Accuracy: .*" training_output.log | tail -n 1 | awk '{print $2}') || true
-          AUC=$(grep -o "AUC: .*" training_output.log | tail -n 1 | awk '{print $2}') || true
-
-          echo "Dev accuracy: $ACC"
-          echo "Dev AUC: $AUC"
-
-          echo "dev_accuracy=$ACC" >> "$GITHUB_OUTPUT"
-          echo "dev_auc=$AUC" >> "$GITHUB_OUTPUT"
-
-      - name: Comment dev metrics on pull request
+      - name: Comment dev job status on pull request
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const acc = '${{ steps.parse-metrics.outputs.dev_accuracy }}';
-            const auc = '${{ steps.parse-metrics.outputs.dev_auc }}';
-
             const prNumber = context.payload.pull_request.number;
-
-            let body = '✅ Dev training workflow completed.';
-            if (acc || auc) {
-              body += '\n\n**Dev evaluation metrics**';
-              if (acc) body += `\n- Accuracy: ${acc}`;
-              if (auc) body += `\n- AUC: ${auc}`;
-            } else {
-              body += '\n\nMetrics could not be parsed from logs. Check the Azure Machine Learning job run for details.';
-            }
+            const body = '✅ Dev training job was started and completed without streaming the log output.';
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
