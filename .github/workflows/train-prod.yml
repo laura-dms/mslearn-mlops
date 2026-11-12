@@ -65,9 +65,30 @@ jobs:
 
           echo "job_name=$JOB_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Stream prod training job
+      - name: Wait for Azure ML job completion
         run: |
-          az ml job stream --name "${{ steps.train.outputs.job_name }}" --debug
+          JOB_NAME="${{ steps.train.outputs.job_name }}"
+          echo "Waiting for job: $JOB_NAME"
+
+          for i in $(seq 1 60); do
+            STATUS=$(az ml job show -n "$JOB_NAME" --query "status" -o tsv 2>/dev/null || echo "NotFound")
+            echo "Current status: $STATUS"
+
+            if [ "$STATUS" = "Completed" ]; then
+              echo "Job completed successfully."
+              exit 0
+            fi
+
+            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Canceled" ] || [ "$STATUS" = "Cancelled" ]; then
+              echo "Job ended in failed state: $STATUS"
+              exit 1
+            fi
+
+            sleep 30
+          done
+
+          echo "Job did not complete within the timeout period."
+          exit 1
 
       - name: Download prod training outputs
         id: download
